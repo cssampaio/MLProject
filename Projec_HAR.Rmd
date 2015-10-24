@@ -1,0 +1,254 @@
+---
+title: "Practical Machine Learning Project"
+author: "cssampaio"
+---
+##  Practical Machine Learning Project
+cssampaio
+
+### Introdution
+
+This report analises data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants in order to identify how well barbell lifts are performed. The data is extracted from Weight Lifting Exercises Dataset for Human Activity Recognition. More information can be found in the source below.
+
+Source: http://groupware.les.inf.puc-rio.br/har
+
+The Weight Lifting Exercises Dataset contains the "classe" variable in the training set, which classifies the execution of the exercise:
+
+    Class A = exactly according to the specification
+    Class B = throwing the elbows to the front
+    Class C = lifting the dumbbell only halfway
+    Class D = lowering the dumbbell only halfway
+    Class E = throwing the hips to the front
+
+This document shows the selection of the predictors and the analysis of some machine learning predictive models in the training set. The machine learning predictive model with best accuracy is, then, applied to the testing set to obtain the classification of the outcome.
+
+### Initialization
+
+Loading useful libraries.
+```{r, results = "hide", warning = FALSE, message = FALSE}
+library(caret)
+library(rpart)
+library(randomForest)
+library(gbm)
+library(plyr)
+```
+
+Setting seed for reproducibility.
+```{r}
+set.seed(1234)
+```
+
+Loading data.
+```{r}
+if (!file.exists("pml-training.csv")) {
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                  "pml-training.csv")
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                  "pml-testing.csv")
+}
+
+csvtest <- "pml-testing.csv"
+testData <- read.csv(csvtest, na.strings = c("NA", ""), header = TRUE)
+
+csvtrain <- "pml-training.csv"
+trainData <- read.csv(csvtrain, na.strings = c("NA", ""), header = TRUE)
+```
+
+### Exploratory analysis
+
+Exploring the data set.
+```{r}
+# str(trainData)
+dim(trainData)
+trainData[c(1,24),]
+```
+
+The data set has 160 variables, but some variables do not work as predictors for the "classe" outcome:
+    
+    * Informative variables, such as "user_name" that identifies the participant.
+    * Statistics variables, such as "skewness" only appear when the variable "new_window" = "yes".
+
+Selected predictors to compute the outcome.
+```{r}
+grep("^accel|^gyros|^magnet|^num|^pitch|^roll|^total|^yaw", names(trainData), value = TRUE)
+```
+
+### Cleaning data set
+
+Based on the previous check, the training data set is cleaned to keep only the valid predictors and the outcome. Also, the observations correponding to "new_window" = "yes" are removed.
+```{r}
+# Creating data set with valid predictors and outcome
+trainClean <- trainData[,grepl("^accel|^gyros|^magnet|^new|^num|^pitch|^roll|^total|^yaw|^classe", names(trainData))]
+
+# Removing new_window = "yes" observations
+trainClean <- trainClean[trainClean$new_window == "no",]
+# Removing new_window column
+trainClean <- trainClean[,-c(trainClean$new_window)]
+
+# str(trainClean)
+dim(trainClean)
+sum(is.na(trainClean))
+```
+
+Similarly, the testing data set is cleaned.
+```{r}
+testClean <- testData[,grepl("^accel|^gyros|^magnet|^num|^pitch|^roll|^total|^yaw|^problem", names(testData))]
+
+# str(testClean)
+dim(testClean)
+```
+
+### Machine Learning Predictive Models
+
+Dividing training set for validation.
+```{r}
+inTrain = createDataPartition(trainClean$classe, p = 0.6, list = FALSE)
+training = trainClean[inTrain,]
+testing = trainClean[-inTrain,]
+```
+
+Applying predictive models.
+
+The default resampling for the train function in caret package uses bootstrapping. Using trControl parameter to set 10-fold cross-validation for resampling.
+```{r}
+# 10-fold cross-validation
+tc <- trainControl("cv", 10)
+```
+
+#### Decision Tree
+
+```{r, cache = TRUE}
+# Model fit
+modFit1 <- train(classe ~ ., data = training, method = "rpart", trControl = tc)
+# modFit1
+# fancyRpartPlot(modFit1$finalModel)
+
+# Model accuracy
+predictions1 <- predict(modFit1, newdata = testing)
+cm1 <- confusionMatrix(predictions1, testing$classe)
+cm1
+```
+
+Trying to improve model fit accuracy by setting tuneLength.
+```{r, cache = TRUE}
+# Model fit
+modFit2 <- train(classe ~ ., data = training, method = "rpart", trControl = tc, tuneLength = 10)
+# modFit2
+# fancyRpartPlot(modFit2$finalModel)
+
+# Model accuracy
+predictions2 <- predict(modFit2, testing)
+cm2 <- confusionMatrix(predictions2, testing$classe)
+cm2
+
+# Out of sample error
+ose2 <- 1- cm2$overall['Accuracy']
+attr(ose2,"names") <- "ose2"
+ose2
+
+# Confusion Matrix plot
+results <- data.frame(pred = predictions2, obs = testing$classe)
+p <- ggplot(results, aes(x = pred, y = obs, color = factor(pred)))
+p <- p +
+    labs(title = "Decision Tree Confusion Matrix",
+        x = "Predictions", y = "Observations") + 
+    scale_color_discrete(name="Predictions") +
+    geom_jitter(position = position_jitter(width = 0.25, height = 0.25))
+p
+```
+
+Some improvement, but still low accuracy.
+
+#### Random Forest
+
+```{r, cache = TRUE}
+# Model fit
+modFit3 <- train(classe ~ ., data = training, method = "rf", trControl = tc)
+# modFit3
+
+# Model accuracy
+predictions3 <- predict(modFit3, testing)
+cm3 <- confusionMatrix(predictions3, testing$classe)
+cm3
+
+# Out of sample error
+ose3 <- 1- cm3$overall['Accuracy']
+attr(ose3,"names") <- "ose3"
+ose3
+
+# Confusion Matrix plot
+results <- data.frame(pred = predictions3, obs = testing$classe)
+p <- ggplot(results, aes(x = pred, y = obs, color = factor(pred)))
+p <- p +
+    labs(title = "Random Forest Confusion Matrix",
+        x = "Predictions", y = "Observations") + 
+    scale_color_discrete(name="Predictions") +
+    geom_jitter(position = position_jitter(width = 0.25, height = 0.25))
+p
+```
+
+Very high accuracy.
+
+#### Boosting
+
+```{r, cache = TRUE}
+
+# Model fit
+modFit4 <- train(classe ~ ., data = training, method = "gbm", trControl = tc, verbose = FALSE)
+# modFit4
+
+# Model accuracy
+predictions4 <- predict(modFit4, testing)
+cm4 <- confusionMatrix(predictions4, testing$classe)
+cm4
+
+# Out of sample error
+ose4 <- 1 - cm4$overall['Accuracy']
+attr(ose4,"names") <- "ose4"
+ose4
+
+# Confusion Matrix plot
+results <- data.frame(pred = predictions4, obs = testing$classe)
+p <- ggplot(results, aes(x = pred, y = obs, color = factor(pred)))
+p <- p +
+    labs(title = "Boosting Confusion Matrix",
+        x = "Predictions", y = "Observations") + 
+    scale_color_discrete(name="Predictions") +
+    geom_jitter(position = position_jitter(width = 0.25, height = 0.25))
+p
+```
+
+Very high accuracy.
+
+### Conclusion
+
+Both Random Forest and Boosting provide very high accuracy, with Random Forest having better performance than Boosting.
+
+### Teste Case Predictions
+
+Checking outcome predictions for 20 different test cases.
+```{r, cache = TRUE}
+tcpredictions3 <- predict(modFit3, testClean)
+tcpredictions3
+
+tcpredictions4 <- predict(modFit4, testClean)
+tcpredictions4
+
+# Comparing test case predictions
+all(tcpredictions3 == tcpredictions4)
+```
+
+Both Random Forest and Boosting give the same outcome predictions for 20 different test cases.
+
+Generating test case prediction files.
+```{r, cache = TRUE}
+# Generating prediction files
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+pml_write_files(tcpredictions3)
+```
